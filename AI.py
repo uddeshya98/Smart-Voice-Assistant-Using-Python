@@ -1,6 +1,18 @@
 import pyttsx3
 import os
 os.environ["PYTHON_SOUNDDEVICE"] = "1"
+# Suppress ALSA warnings
+from ctypes import *
+ERROR_HANDLER_FUNC = CFUNCTYPE(None, c_char_p, c_int, c_char_p, c_int, c_char_p)
+def py_error_handler(filename, line, function, err, fmt):
+    pass
+c_error_handler = ERROR_HANDLER_FUNC(py_error_handler)
+try:
+    asound = cdll.LoadLibrary('libasound.so.2')
+    asound.snd_lib_error_set_handler(c_error_handler)
+except:
+    pass
+
 import speech_recognition as sr
 import datetime
 import webbrowser
@@ -13,11 +25,13 @@ from selenium.webdriver.common.by import By
 import threading
 
 # Initialize text-to-speech engine
-engine = pyttsx3.init('sapi5')
+engine = pyttsx3.init()
 voices = engine.getProperty('voices')
-engine.setProperty('voice', voices[0].id)
+if voices:
+    engine.setProperty('voice', voices[0].id)
 
 driver = None
+USE_TEXT_MODE = False  # Will be set based on microphone availability
 
 def speak(audio):
     """Converts text to speech"""
@@ -26,21 +40,39 @@ def speak(audio):
 
 def takeCommand():
     """Takes microphone input from the user and returns the text output"""
+    global USE_TEXT_MODE
+    
+    if USE_TEXT_MODE:
+        # Text input mode for environments without microphone
+        query = input("You: ").strip()
+        if query:
+            print(f"User said: {query}\n")
+            return query.lower()
+        else:
+            return takeCommand()
+    
     r = sr.Recognizer()
-    with sr.Microphone() as source:
-        print("Listening...")
-        r.pause_threshold = 0.8
-        r.energy_threshold = 300
-        audio = r.listen(source)
-
     try:
-        print("Recognizing...")
-        query = r.recognize_google(audio, language='en-in') 
-        print(f"User said: {query}\n")
-    except Exception as e:
-        speak("Sorry, I didn't get that. Could you please repeat that")
-        query = takeCommand()
-    return query.lower()
+        with sr.Microphone() as source:
+            print("Listening...")
+            r.pause_threshold = 0.8
+            r.energy_threshold = 300
+            audio = r.listen(source)
+
+        try:
+            print("Recognizing...")
+            query = r.recognize_google(audio, language='en-in') 
+            print(f"User said: {query}\n")
+        except Exception as e:
+            speak("Sorry, I didn't get that. Could you please repeat that")
+            query = takeCommand()
+        return query.lower()
+    except OSError as e:
+        # Fallback to text input when no audio device is available
+        print("\n⚠️  Audio device not available - Switching to text input mode")
+        print("Make sure your microphone is connected or allow microphone access in your browser.\n")
+        USE_TEXT_MODE = True
+        return takeCommand()
 
 def ask_openai(query):
     """Gets a response from OpenAI's GPT model based on the user query"""
@@ -92,7 +124,19 @@ def closeBrowser():
         speak("No browser is currently open.")
 
 if __name__ == '__main__':
+    # Check if microphone is available at startup
+    try:
+        mic = sr.Microphone()
+        audio = sr.Microphone()
+        print("✓ Microphone detected - Voice input enabled")
+        USE_TEXT_MODE = False
+    except OSError:
+        print("⚠️  No microphone detected - Using text input mode")
+        USE_TEXT_MODE = True
+    
+    print("\n" + "="*50)
     speak("Hello, I am JARVIS AI. How can I assist you today?")
+    print("="*50 + "\n")
     
     while True:
         query = takeCommand()
